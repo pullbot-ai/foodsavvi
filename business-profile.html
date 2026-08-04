@@ -18,7 +18,6 @@
         }
     </script>
     <style>
-        /* ========== All styles ========== */
         @font-face {
             font-family: 'RusticStory';
             src: url('./assets/RusticStory-R9vKM.ttf') format('truetype'),
@@ -402,6 +401,7 @@
             gap: 6px;
             flex-shrink: 0;
             flex-wrap: wrap;
+            align-items: center;
         }
         .emp-action-btn {
             background: none;
@@ -419,6 +419,36 @@
         .emp-action-btn.revoke:hover { background: #ffcdd2; }
         .emp-action-btn.assign { background: #e3f2fd; color: #0d47a1; }
         .emp-action-btn.assign:hover { background: #bbdefb; }
+
+        .role-assign-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+        .role-dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            min-width: 130px;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 4px 0;
+        }
+        .role-dropdown-menu.show {
+            display: block;
+        }
+        .role-dropdown-item {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .role-dropdown-item:hover {
+            background: #f0f4ff;
+        }
 
         .notification-item.unread {
             background: #e3f2fd;
@@ -458,11 +488,11 @@
         }
 
         .nav-item.active .nav-emoji {
-            color: #999; /* keep emoji gray */
+            color: #999;
         }
 
         .nav-item.active span:last-child {
-            color: #667eea; /* only text turns blue */
+            color: #667eea;
         }
 
         .nav-emoji {
@@ -1535,7 +1565,6 @@
 <body>
     <div class="app">
         <div class="header">
-            <!-- 🔄 Dynamic back link: owner → index.html, employee → employee-settings.html -->
             <a href="#" id="backLink" class="back-link">←</a>
             <h1>business settings</h1>
             <button class="refresh-all-btn" onclick="refreshAll()">↻</button>
@@ -1600,7 +1629,7 @@
                 <button class="tab" onclick="switchTab('lookup')">lookup</button>
                 <button class="tab" onclick="switchTab('verification')">verify</button>
                 <button class="tab" onclick="switchTab('notifications')">alerts</button>
-                <button class="tab" onclick="switchTab('data')">📊 data</button>
+                <button class="tab" onclick="switchTab('data')">data</button>
             </div>
 
             <!-- Profile Tab -->
@@ -1767,7 +1796,6 @@
                     </div>
                     <div class="inventory-actions">
                         <button class="save-btn" onclick="addInventoryItem()">➕ Add to Inventory</button>
-                        <button class="secondary-btn" onclick="importFromAds()">📥 Import from Ads</button>
                     </div>
                 </div>
 
@@ -1864,18 +1892,6 @@
                             Required columns: <strong>Item Name</strong>, <strong>Quantity</strong>. Optional: Batch Number, Expiry Date, Original Price, Sale Price, Category, On Sale
                         </div>
                     </div>
-                    
-                    <div>
-                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">Import Orders (Excel)</label>
-                        <div class="file-input-wrapper">
-                            <input type="file" id="ordersImportFile" accept=".xlsx,.xls">
-                            <button onclick="importOrdersFromExcel()" style="background: #667eea; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit;">Import</button>
-                            <button class="template-btn" onclick="downloadTemplate('orders')">📄 Template</button>
-                        </div>
-                        <div class="import-help">
-                            Required columns: <strong>Customer</strong>, <strong>Food Name</strong>. Optional: Quantity, Total Amount, Status, Batch Number, Created At
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -1962,121 +1978,44 @@
     </script>
 
     <script>
-        // ===== SECURITY: Check if user is owner or employee =====
+        // ===== GLOBAL VARIABLES =====
         let currentPermissions = {};
         let isOwner = false;
         let isManager = false;
         let isEmployee = false;
+        let businessId = null; // This holds the owner's ID for employees, or the user's own ID for owners
 
-        (async function checkAccess() {
-            const user = Backend.getCurrentUser();
-            const role = localStorage.getItem('userRole');
-            if (!user || role !== 'advertiser') {
-                window.location.href = 'login.html';
-                return;
-            }
+        let pickupConfirmMap = loadPickupMap();
+        let businessRole = 'staff';
+        let isVerified = false;
+        let currentUser = null;
+        let activeTab = 'profile';
+        let allOrdersCache = [];
+        let selectedOrderIds = new Set();
+        let currentDetailOrderId = null;
 
-            // Fetch permissions
-            currentPermissions = await Backend.getEmployeePermissions(user.id);
-
-            if (currentPermissions.isOwner) {
-                isOwner = true;
-            } else if (user.get('businessRole') === 'manager') {
-                isManager = true;
-            } else if (!currentPermissions.isPending) {
-                isEmployee = true;
-            }
-
-            // If employee, set the back link to employee-settings.html
-            if (isEmployee || isManager) {
-                document.getElementById('backLink').href = 'employee-settings.html';
-            } else {
-                document.getElementById('backLink').href = 'index.html';
-            }
-
-            // HIDE owner-only tabs if employee
-            if (isEmployee) {
-                document.getElementById('employeesTab').style.display = 'none';
-                document.getElementById('verificationTab').style.display = 'none';
-                document.getElementById('dataTab').style.display = 'none';
-                // Hide the tabs from the tab bar
-                document.querySelectorAll('.tab')[1].style.display = 'none'; // employees
-                document.querySelectorAll('.tab')[5].style.display = 'none'; // verify
-                document.querySelectorAll('.tab')[7].style.display = 'none'; // data
-                // Hide wallet (employees don't need to see business wallet)
-                document.getElementById('walletCard').style.display = 'none';
-                // Hide stats grid (employees don't need to see business stats)
-                document.querySelector('.stats-grid').style.display = 'none';
-                // Hide role banner (employees don't need to see owner role)
-                document.getElementById('roleBanner').style.display = 'none';
-                // Hide save profile button for employees
-                document.getElementById('saveProfileBtn').style.display = 'none';
-                // Disable all profile inputs
-                document.querySelectorAll('#profileTab .form-input').forEach(input => {
-                    input.disabled = true;
-                });
-            }
-
-            // If manager, hide employee management and verification but keep other features
-            if (isManager && !isOwner) {
-                document.getElementById('employeesTab').style.display = 'none';
-                document.getElementById('verificationTab').style.display = 'none';
-                document.querySelectorAll('.tab')[1].style.display = 'none'; // employees
-                document.querySelectorAll('.tab')[5].style.display = 'none'; // verify
-                document.getElementById('saveProfileBtn').style.display = 'block'; // managers can edit
-                document.querySelectorAll('#profileTab .form-input').forEach(input => {
-                    input.disabled = false;
-                });
-            }
-
-            // If owner, show everything (default)
-        })();
-
-        // ===== LOCALSTORAGE-BASED persistence for businessPickupConfirmed =====
+        // ===== PERSISTENCE HELPERS =====
         function loadPickupMap() {
             try {
                 const raw = localStorage.getItem('businessPickupConfirmMap');
                 return raw ? JSON.parse(raw) : {};
-            } catch (e) {
-                return {};
-            }
+            } catch (e) { return {}; }
         }
 
         function savePickupMap(map) {
             localStorage.setItem('businessPickupConfirmMap', JSON.stringify(map));
         }
 
-        let pickupConfirmMap = loadPickupMap();
-
-        let businessRole = 'staff';
-        let isVerified = false;
-        let currentUser = null;
-        let activeTab = 'profile';
-        let allOrdersCache = [];
-
-        let selectedOrderIds = new Set();
-        let currentDetailOrderId = null;
-
-        // ===== FUNCTION TO CALCULATE PENDING AMOUNT =====
         function calcPendingFromOrders(orders) {
             let total = 0;
             for (const order of orders) {
-                if (order.status === 'confirmed_by_business') {
-                    total += (order.totalAmount || 0);
-                }
+                if (order.status === 'confirmed_by_business') total += (order.totalAmount || 0);
             }
             return total;
         }
 
-        // ===== FUNCTION TO COUNT PENDING ORDERS =====
         function countPendingOrders(orders) {
-            let count = 0;
-            for (const order of orders) {
-                if (order.status === 'confirmed_by_business') {
-                    count++;
-                }
-            }
-            return count;
+            return orders.filter(o => o.status === 'confirmed_by_business').length;
         }
 
         function updatePendingDisplay() {
@@ -2084,7 +2023,6 @@
             document.getElementById('pendingBalance').textContent = `Pending: $${pending.toFixed(2)}`;
         }
 
-        // ===== UPDATE NAV ACTIVE (text turns blue) =====
         function updateNavActive(tabName) {
             const navItems = document.querySelectorAll('.bottom-nav .nav-item');
             navItems.forEach(item => item.classList.remove('active'));
@@ -2102,6 +2040,7 @@
             if (navItems[idx]) navItems[idx].classList.add('active');
         }
 
+        // ===== DOMContentLoaded =====
         document.addEventListener('DOMContentLoaded', async () => {
             const user = Backend.getCurrentUser();
             const role = localStorage.getItem('userRole');
@@ -2110,17 +2049,61 @@
                 return;
             }
             currentUser = user;
+
+            // --- Resolve business ID ---
+            // For employees: user.get('businessId') is the owner's ID
+            // For owners: it's null, so we use the user's own ID
+            businessId = user.get('businessId') || user.id;
+            console.log('🔍 Business ID resolved to:', businessId);
+
+            // --- Check permissions ---
+            currentPermissions = await Backend.getEmployeePermissions(user.id);
+            if (currentPermissions.isOwner) {
+                isOwner = true;
+            } else if (user.get('businessRole') === 'manager') {
+                isManager = true;
+            } else if (!currentPermissions.isPending) {
+                isEmployee = true;
+            }
+
+            // --- Set back link ---
+            if (isEmployee || isManager) {
+                document.getElementById('backLink').href = 'employee-settings.html';
+            } else {
+                document.getElementById('backLink').href = 'index.html';
+            }
+
+            // --- Hide tabs/features for employees ---
+            if (isEmployee) {
+                document.getElementById('employeesTab').style.display = 'none';
+                document.getElementById('verificationTab').style.display = 'none';
+                document.getElementById('dataTab').style.display = 'none';
+                // Hide tab buttons (0:profile,1:employees,2:orders,3:inventory,4:lookup,5:verify,6:alerts,7:data)
+                document.querySelectorAll('.tab')[1].style.display = 'none';
+                document.querySelectorAll('.tab')[5].style.display = 'none';
+                document.querySelectorAll('.tab')[7].style.display = 'none';
+                document.getElementById('walletCard').style.display = 'none';
+                document.querySelector('.stats-grid').style.display = 'none';
+                document.getElementById('roleBanner').style.display = 'none';
+                document.getElementById('saveProfileBtn').style.display = 'none';
+                document.querySelectorAll('#profileTab .form-input').forEach(input => {
+                    input.disabled = true;
+                });
+            }
+            if (isManager && !isOwner) {
+                document.getElementById('employeesTab').style.display = 'none';
+                document.getElementById('verificationTab').style.display = 'none';
+                document.querySelectorAll('.tab')[1].style.display = 'none';
+                document.querySelectorAll('.tab')[5].style.display = 'none';
+            }
+
+            // --- Set UI ---
             businessRole = localStorage.getItem('businessRole') || 'owner';
             isVerified = localStorage.getItem('businessVerified') === 'true';
-
-            const urlParams = new URLSearchParams(window.location.search);
-            const tabParam = urlParams.get('tab');
-            if (tabParam && ['profile', 'employees', 'orders', 'inventory', 'lookup', 'verification', 'notifications', 'data'].includes(tabParam)) {
-                activeTab = tabParam;
-            }
-
             updateRoleUI();
             updateVerificationUI();
+
+            // --- Load all data (businessId is now guaranteed) ---
             await loadBusinessData();
             await loadEmployeesAndRoles();
             await loadOrders();
@@ -2128,31 +2111,18 @@
             await loadStats();
             await refreshWallet();
             await loadInventory();
-            switchTab(activeTab);
+
+            // --- Handle tab from URL ---
+            const urlParams = new URLSearchParams(window.location.search);
+            const tabParam = urlParams.get('tab');
+            if (tabParam && ['profile','employees','orders','inventory','lookup','verification','notifications','data'].includes(tabParam)) {
+                switchTab(tabParam);
+            } else {
+                switchTab('profile');
+            }
         });
 
-        async function refreshAll() {
-            await loadBusinessData();
-            await loadEmployeesAndRoles();
-            await loadOrders();
-            await loadNotifications();
-            await loadStats();
-            await refreshWallet();
-            await loadInventory();
-            showStatus('All data refreshed!', 'success');
-        }
-
-        async function refreshWallet() {
-            try {
-                const balance = await Backend.getBusinessWalletBalance(currentUser.id);
-                document.getElementById('availableBalance').textContent = `$${balance.available.toFixed(2)}`;
-                updatePendingDisplay();
-            } catch (error) {
-                document.getElementById('availableBalance').textContent = '$0.00';
-                document.getElementById('pendingBalance').textContent = 'Pending: $0.00';
-            }
-        }
-
+        // ===== UI UPDATE FUNCTIONS =====
         function updateRoleUI() {
             if (businessRole === 'owner') {
                 document.getElementById('roleIcon').textContent = '👑';
@@ -2186,6 +2156,19 @@
             }
         }
 
+        // ===== REFRESH =====
+        async function refreshAll() {
+            await loadBusinessData();
+            await loadEmployeesAndRoles();
+            await loadOrders();
+            await loadNotifications();
+            await loadStats();
+            await refreshWallet();
+            await loadInventory();
+            showStatus('All data refreshed!', 'success');
+        }
+
+        // ===== BUSINESS DATA =====
         async function loadBusinessData() {
             try {
                 const user = Backend.getCurrentUser();
@@ -2223,10 +2206,31 @@
             }
         }
 
-        // ================================================================
-        // ========== EMPLOYEES & ROLES ==========
-        // ================================================================
-        
+        // ===== WALLET =====
+        async function refreshWallet() {
+            try {
+                const balance = await Backend.getBusinessWalletBalance(businessId);
+                document.getElementById('availableBalance').textContent = `$${balance.available.toFixed(2)}`;
+                updatePendingDisplay();
+            } catch (error) {
+                document.getElementById('availableBalance').textContent = '$0.00';
+                document.getElementById('pendingBalance').textContent = 'Pending: $0.00';
+            }
+        }
+
+        async function requestWithdraw() {
+            const balance = await Backend.getBusinessWalletBalance(businessId);
+            if (balance.available < 5) { showStatus(`Minimum withdrawal $5. Available: $${balance.available.toFixed(2)}`, 'error'); return; }
+            const amount = prompt(`Enter amount to withdraw (min $5, max $${balance.available.toFixed(2)})`, '5');
+            if (!amount) return;
+            const withdrawAmount = parseFloat(amount);
+            if (isNaN(withdrawAmount) || withdrawAmount < 5 || withdrawAmount > balance.available) { showStatus('Invalid amount', 'error'); return; }
+            const result = await Backend.requestWithdrawal(businessId, withdrawAmount);
+            if (result.success) { showStatus(result.message, 'success'); await refreshWallet(); await loadStats(); } 
+            else { showStatus(result.message, 'error'); }
+        }
+
+        // ===== EMPLOYEES & ROLES =====
         async function loadEmployeesAndRoles() {
             await loadEmployees();
             await loadRoles();
@@ -2237,11 +2241,11 @@
             const activeContainer = document.getElementById('activeEmployeesList');
             try {
                 const employees = await Backend.getStaffList();
-                
-                // Render Pending (users with role 'pending')
-                const pending = employees.filter(e => e.role === 'pending');
+                const roles = await Backend.getRoles(currentUser.id);
+
+                const pending = employees.filter(e => (e.role || '').toLowerCase() === 'pending');
                 if (pending.length === 0) {
-                    pendingContainer.innerHTML = '<div class="empty-state" style="padding: 20px;">No pending requests</div>';
+                    pendingContainer.innerHTML = '<div class="empty-state" style="padding:20px;">No pending requests</div>';
                 } else {
                     pendingContainer.innerHTML = pending.map(emp => `
                         <div class="employee-item">
@@ -2258,12 +2262,18 @@
                     `).join('');
                 }
 
-                // Render Active (users who are not pending and not the owner)
-                const active = employees.filter(e => e.role !== 'pending' && e.role !== 'owner');
+                const active = employees.filter(e => {
+                    const role = (e.role || '').toLowerCase();
+                    return role !== 'pending' && role !== 'owner' && role !== '';
+                });
                 if (active.length === 0) {
-                    activeContainer.innerHTML = '<div class="empty-state" style="padding: 20px;">No active employees</div>';
+                    activeContainer.innerHTML = '<div class="empty-state" style="padding:20px;">No active employees</div>';
                 } else {
-                    activeContainer.innerHTML = active.map(emp => `
+                    activeContainer.innerHTML = active.map(emp => {
+                        const roleItems = roles.length > 0
+                            ? roles.map(r => `<div class="role-dropdown-item" onclick="event.stopPropagation(); setEmployeeRoleDirect('${emp.id}', '${escapeHtml(r.name)}')">${escapeHtml(r.name)}</div>`).join('')
+                            : '<div class="role-dropdown-item" style="color:#999;">No custom roles</div>';
+                        return `
                         <div class="employee-item">
                             <div class="employee-avatar">👤</div>
                             <div class="employee-details">
@@ -2271,14 +2281,18 @@
                                 <span class="employee-role ${emp.role}">${emp.role}</span>
                             </div>
                             <div class="employee-actions">
-                                <button class="emp-action-btn assign" onclick="assignRole('${emp.id}')">🎯 Assign Role</button>
+                                <div class="role-assign-wrapper">
+                                    <button class="emp-action-btn assign" onclick="toggleRoleDropdown(event, '${emp.id}')">🎯 Assign Role</button>
+                                    <div class="role-dropdown-menu" id="roleDropdown_${emp.id}">
+                                        ${roleItems}
+                                    </div>
+                                </div>
                                 <button class="emp-action-btn revoke" onclick="removeEmployee('${emp.id}')">🗑️ Remove</button>
                             </div>
                         </div>
-                    `).join('');
+                    `}).join('');
                 }
 
-                // ---- INVITATION CODE - always show in employees tab ----
                 const user = Backend.getCurrentUser();
                 let inviteCode = user ? user.get('invitationCode') : null;
                 if (!inviteCode) {
@@ -2297,6 +2311,35 @@
             }
         }
 
+        function toggleRoleDropdown(event, empId) {
+            event.stopPropagation();
+            const dropdown = document.getElementById(`roleDropdown_${empId}`);
+            if (dropdown) {
+                document.querySelectorAll('.role-dropdown-menu.show').forEach(d => {
+                    if (d !== dropdown) d.classList.remove('show');
+                });
+                dropdown.classList.toggle('show');
+            }
+        }
+
+        async function setEmployeeRoleDirect(employeeId, roleName) {
+            document.querySelectorAll('.role-dropdown-menu.show').forEach(d => d.classList.remove('show'));
+            if (!confirm(`Assign role "${roleName}" to this employee?`)) return;
+            const result = await Backend.assignRoleToEmployee(employeeId, roleName);
+            if (result.success) {
+                showStatus(`Role "${roleName}" assigned!`, 'success');
+                await loadEmployees();
+            } else {
+                showStatus(result.message, 'error');
+            }
+        }
+
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.role-assign-wrapper')) {
+                document.querySelectorAll('.role-dropdown-menu.show').forEach(d => d.classList.remove('show'));
+            }
+        });
+
         function copyInviteCode() {
             const code = document.getElementById('displayInviteCode').textContent;
             if (code === 'Not set' || code === '-----') {
@@ -2304,7 +2347,7 @@
                 return;
             }
             navigator.clipboard.writeText(code).then(() => {
-                showStatus('✅ Invitation code copied to clipboard!', 'success');
+                showStatus('✅ Invitation code copied!', 'success');
             }).catch(() => {
                 const textarea = document.createElement('textarea');
                 textarea.value = code;
@@ -2336,24 +2379,6 @@
             const result = await Backend.assignRoleToEmployee(employeeId, 'staff');
             if (result.success) {
                 showStatus('Employee approved!', 'success');
-                await loadEmployees();
-            } else {
-                showStatus(result.message, 'error');
-            }
-        }
-
-        async function assignRole(employeeId) {
-            const roles = await Backend.getRoles(currentUser.id);
-            if (roles.length === 0) {
-                showStatus('No custom roles created yet. Create one in the Roles section.', 'info');
-                return;
-            }
-            const roleNames = roles.map(r => r.name);
-            const selected = prompt(`Assign a role to this employee:\n\nAvailable roles: ${roleNames.join(', ')}`);
-            if (!selected) return;
-            const result = await Backend.assignRoleToEmployee(employeeId, selected);
-            if (result.success) {
-                showStatus(`Role "${selected}" assigned!`, 'success');
                 await loadEmployees();
             } else {
                 showStatus(result.message, 'error');
@@ -2403,13 +2428,14 @@
                 document.getElementById('newRoleName').value = '';
                 checkboxes.forEach(cb => cb.checked = false);
                 await loadRoles();
+                await loadEmployees();
             } else {
                 showStatus(result.message, 'error');
             }
         }
 
         async function deleteRole(roleId) {
-            if (!confirm('Delete this role? Employees with this role will need a new assignment.')) return;
+            if (!confirm('Delete this role?')) return;
             const result = await Backend.deleteRole(roleId);
             if (result.success) {
                 showStatus('Role deleted', 'success');
@@ -2419,15 +2445,12 @@
             }
         }
 
-        // ================================================================
-        // ========== ORDERS ==========
-        // ================================================================
-
+        // ===== ORDERS =====
         async function loadOrders() {
             const container = document.getElementById('ordersList');
             const bulkActionsDiv = document.getElementById('orderBulkActions');
             try {
-                const orders = await Backend.getOrdersForBusiness(currentUser.id);
+                const orders = await Backend.getOrdersForBusiness(businessId);
                 orders.forEach(order => {
                     if (pickupConfirmMap[order.id] !== undefined) {
                         order.businessPickupConfirmed = pickupConfirmMap[order.id];
@@ -2581,6 +2604,7 @@
             bulkBtn.textContent = '✓ Confirm Selected';
         }
 
+        // ===== NOTIFICATIONS =====
         async function loadNotifications() {
             const container = document.getElementById('notificationsList');
             try {
@@ -2600,10 +2624,11 @@
             await loadNotifications();
         }
 
+        // ===== STATS =====
         async function loadStats() {
             try {
-                const ads = await Backend.getShopAds(currentUser.id);
-                const orders = await Backend.getOrdersForBusiness(currentUser.id);
+                const ads = await Backend.getShopAds(businessId);
+                const orders = await Backend.getOrdersForBusiness(businessId);
                 const activeAds = ads.filter(a => a.active).length;
                 const pendingOrders = countPendingOrders(orders);
                 const uniqueCustomers = [...new Set(orders.map(o => o.consumerId))].length;
@@ -2616,18 +2641,7 @@
             } catch (error) {}
         }
 
-        async function requestWithdraw() {
-            const balance = await Backend.getBusinessWalletBalance(currentUser.id);
-            if (balance.available < 5) { showStatus(`Minimum withdrawal $5. Available: $${balance.available.toFixed(2)}`, 'error'); return; }
-            const amount = prompt(`Enter amount to withdraw (min $5, max $${balance.available.toFixed(2)})`, '5');
-            if (!amount) return;
-            const withdrawAmount = parseFloat(amount);
-            if (isNaN(withdrawAmount) || withdrawAmount < 5 || withdrawAmount > balance.available) { showStatus('Invalid amount', 'error'); return; }
-            const result = await Backend.requestWithdrawal(currentUser.id, withdrawAmount);
-            if (result.success) { showStatus(result.message, 'success'); await refreshWallet(); await loadStats(); } 
-            else { showStatus(result.message, 'error'); }
-        }
-
+        // ===== VERIFICATION =====
         async function submitVerification() {
             if (businessRole !== 'owner') { showStatus('Only owners can verify', 'error'); return; }
             const taxId = document.getElementById('taxId').value.trim();
@@ -2637,6 +2651,7 @@
             else { showStatus(result.message, 'error'); }
         }
 
+        // ===== TAB SWITCHING =====
         function switchTab(tabName) {
             activeTab = tabName;
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -2645,14 +2660,10 @@
             const tabMap = { profile: 0, employees: 1, orders: 2, inventory: 3, lookup: 4, verification: 5, notifications: 6, data: 7 };
             if (tabs[tabMap[tabName]]) tabs[tabMap[tabName]].classList.add('active');
             document.getElementById(`${tabName}Tab`).classList.add('active');
-            // Update nav active state
             updateNavActive(tabName);
         }
 
-        // ================================================================
-        // ========== INVENTORY ==========
-        // ================================================================
-
+        // ===== INVENTORY =====
         function computeClaimedFromOrders(adMap, orders) {
             const claimed = {};
             for (const order of orders) {
@@ -2672,7 +2683,7 @@
         async function loadInventory() {
             const tbody = document.getElementById('inventoryBody');
             try {
-                let items = await Backend.loadInventoryItems();
+                const items = await Backend.loadInventoryItems(businessId);
                 if (!items || items.length === 0) {
                     tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="padding:20px;">No inventory items found. Add your first item above!</td></tr>`;
                     return;
@@ -2685,7 +2696,7 @@
                     reverseMap[invId] = adId;
                 }
 
-                const orders = allOrdersCache.length > 0 ? allOrdersCache : await Backend.getOrdersForBusiness(currentUser.id);
+                const orders = allOrdersCache.length > 0 ? allOrdersCache : await Backend.getOrdersForBusiness(businessId);
                 const claimedMap = computeClaimedFromOrders(adMap, orders);
 
                 tbody.innerHTML = items.map(item => {
@@ -2766,7 +2777,7 @@
                 });
             }
 
-            let currentItems = await Backend.loadInventoryItems() || [];
+            let currentItems = await Backend.loadInventoryItems(businessId) || [];
             currentItems.push({
                 name,
                 batchNumber: batch,
@@ -2776,7 +2787,8 @@
                 salePrice: onSale ? salePrice : 0,
                 category,
                 onSale: onSale,
-                imageBase64: imageBase64
+                imageBase64: imageBase64,
+                businessId: businessId // Ensure the item is tied to the correct business
             });
 
             try {
@@ -2793,7 +2805,7 @@
         }
 
         function openEditInventory(itemId) {
-            Backend.loadInventoryItems().then(items => {
+            Backend.loadInventoryItems(businessId).then(items => {
                 const item = items.find(i => i.id === itemId);
                 if (!item) { showStatus('Item not found', 'error'); return; }
                 document.getElementById('editInvId').value = itemId;
@@ -2842,7 +2854,7 @@
         }
 
         function exportToAd(itemId) {
-            Backend.loadInventoryItems().then(items => {
+            Backend.loadInventoryItems(businessId).then(items => {
                 const item = items.find(i => i.id === itemId);
                 if (!item) { showStatus('Item not found in inventory', 'error'); return; }
                 const imageData = item.productImage || item.imageBase64 || null;
@@ -2866,75 +2878,6 @@
             }).catch(err => { showStatus('Error loading inventory item: ' + err.message, 'error'); });
         }
 
-        // ===== FIXED: Import from Ads – skip zero price ads =====
-        async function importFromAds() {
-            if (!confirm('This will add all active ads to your inventory as new items. Continue?')) return;
-            try {
-                const ads = await Backend.getShopAds(currentUser.id);
-                const activeAds = ads.filter(a => a.active);
-                if (activeAds.length === 0) {
-                    showStatus('No active ads to import', 'info');
-                    return;
-                }
-                let currentItems = await Backend.loadInventoryItems() || [];
-                let addedCount = 0;
-                let skippedCount = 0;
-                for (const ad of activeAds) {
-                    const exists = currentItems.some(i => i.name === ad.foodName && i.batchNumber === ad.batchNumber);
-                    if (exists) continue;
-                    
-                    // ✅ Skip ads with zero or missing price
-                    const adPrice = ad.originalPrice || 0;
-                    if (adPrice <= 0) {
-                        skippedCount++;
-                        continue;
-                    }
-                    
-                    // ✅ Check if ad has discount
-                    const discount = ad.discount || 0;
-                    let newItem = {
-                        name: ad.foodName,
-                        batchNumber: ad.batchNumber || '',
-                        expiryDate: ad.batchExpiryDate || null,
-                        quantity: ad.quantityLeft || 0,
-                        category: ad.category || 'other',
-                        imageBase64: ad.productImage || null
-                    };
-                    if (discount > 0) {
-                        // On sale: set original and sale price
-                        const salePrice = adPrice * (1 - discount / 100);
-                        newItem.originalPrice = adPrice;
-                        newItem.salePrice = salePrice;
-                        newItem.onSale = true;
-                    } else {
-                        newItem.originalPrice = adPrice;
-                        newItem.salePrice = 0;
-                        newItem.onSale = false;
-                    }
-                    
-                    currentItems.push(newItem);
-                    addedCount++;
-                }
-                if (addedCount === 0 && skippedCount > 0) {
-                    showStatus(`Skipped ${skippedCount} ads because they have no price set.`, 'info');
-                    return;
-                }
-                if (addedCount === 0) {
-                    showStatus('No new items to import (all already in inventory)', 'info');
-                    return;
-                }
-                const result = await Backend.saveInventoryItems(currentItems);
-                if (result.success) {
-                    showStatus(`✅ Imported ${addedCount} items from ads!${skippedCount > 0 ? ` (${skippedCount} skipped due to missing price)` : ''}`, 'success');
-                    await loadInventory();
-                } else {
-                    showStatus('Failed to save imported items', 'error');
-                }
-            } catch (error) {
-                showStatus('Error importing from ads: ' + error.message, 'error');
-            }
-        }
-
         async function deleteInventoryItem(itemId) {
             if (!confirm('Are you sure you want to delete this item from inventory?')) return;
             try {
@@ -2944,10 +2887,7 @@
             } catch (error) { showStatus('Error deleting item', 'error'); }
         }
 
-        // ================================================================
-        // ========== LOOKUP ==========
-        // ================================================================
-
+        // ===== LOOKUP =====
         function performLookup() {
             const input = document.getElementById('lookupInput').value.trim().toLowerCase();
             const resultsContainer = document.getElementById('lookupResults');
@@ -3052,6 +2992,7 @@
             finally { if (btn) { btn.disabled = false; btn.textContent = '✗ Cancel Order'; } }
         }
 
+        // ===== UTILITY =====
         function showStatus(message, type) {
             const status = document.getElementById('statusMessage');
             status.textContent = message;
@@ -3065,11 +3006,7 @@
             return str.replace(/[&<>]/g, m => m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;');
         }
 
-        // ================================================================
-        // ========== EXCEL IMPORT/EXPORT FUNCTIONS ==========
-        // ================================================================
-
-        // Helper: Parse Excel file and return data as array of objects
+        // ===== EXCEL IMPORT/EXPORT =====
         function parseExcelFile(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3077,8 +3014,6 @@
                     try {
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
-                        
-                        // Get first sheet
                         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                         const jsonData = XLSX.utils.sheet_to_json(firstSheet);
                         resolve(jsonData);
@@ -3093,18 +3028,13 @@
             });
         }
 
-        // Helper: Download Excel file
         function downloadExcel(data, filename, sheetName = 'Data') {
             if (!data || data.length === 0) {
                 showStatus('No data to export', 'error');
                 return;
             }
-            
-            // Create workbook and worksheet
             const wb = XLSX.utils.book_new();
             const ws = XLSX.utils.json_to_sheet(data);
-            
-            // Auto-size columns (approximate)
             const colWidths = [];
             if (data.length > 0) {
                 const headers = Object.keys(data[0]);
@@ -3118,10 +3048,7 @@
                 });
                 ws['!cols'] = colWidths;
             }
-            
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            
-            // Generate and download
             const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
             const blob = new Blob([wbout], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
@@ -3132,19 +3059,13 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            
             showStatus(`✅ Exported ${data.length} records to ${filename}`, 'success');
         }
 
-        // ---- EXPORT FUNCTIONS ----
         async function exportOrders() {
             try {
-                const orders = await Backend.getOrdersForBusiness(currentUser.id);
-                if (orders.length === 0) {
-                    showStatus('No orders to export', 'error');
-                    return;
-                }
-                
+                const orders = await Backend.getOrdersForBusiness(businessId);
+                if (orders.length === 0) { showStatus('No orders to export', 'error'); return; }
                 const exportData = orders.map(order => ({
                     'Order ID': order.id,
                     'Customer': order.consumerName || '',
@@ -3156,21 +3077,14 @@
                     'Created At': new Date(order.createdAt).toLocaleString(),
                     'Collect By': order.collectByTime ? new Date(order.collectByTime).toLocaleString() : ''
                 }));
-                
                 downloadExcel(exportData, `orders_${new Date().toISOString().split('T')[0]}.xlsx`, 'Orders');
-            } catch (error) {
-                showStatus('Error exporting orders: ' + error.message, 'error');
-            }
+            } catch (error) { showStatus('Error exporting orders: ' + error.message, 'error'); }
         }
 
         async function exportInventory() {
             try {
-                const items = await Backend.loadInventoryItems();
-                if (items.length === 0) {
-                    showStatus('No inventory items to export', 'error');
-                    return;
-                }
-                
+                const items = await Backend.loadInventoryItems(businessId);
+                if (items.length === 0) { showStatus('No inventory items to export', 'error'); return; }
                 const exportData = items.map(item => ({
                     'Item Name': item.name || '',
                     'Batch Number': item.batchNumber || '',
@@ -3181,45 +3095,31 @@
                     'Category': item.category || '',
                     'On Sale': item.onSale ? 'Yes' : 'No'
                 }));
-                
                 downloadExcel(exportData, `inventory_${new Date().toISOString().split('T')[0]}.xlsx`, 'Inventory');
-            } catch (error) {
-                showStatus('Error exporting inventory: ' + error.message, 'error');
-            }
+            } catch (error) { showStatus('Error exporting inventory: ' + error.message, 'error'); }
         }
 
         async function exportEmployees() {
             try {
                 const employees = await Backend.getStaffList();
-                if (employees.length === 0) {
-                    showStatus('No employees to export', 'error');
-                    return;
-                }
-                
+                if (employees.length === 0) { showStatus('No employees to export', 'error'); return; }
                 const exportData = employees.map(emp => ({
                     'Employee ID': emp.id || '',
                     'Username': emp.username || '',
                     'Role': emp.role || '',
                     'Email': emp.email || ''
                 }));
-                
                 downloadExcel(exportData, `employees_${new Date().toISOString().split('T')[0]}.xlsx`, 'Employees');
-            } catch (error) {
-                showStatus('Error exporting employees: ' + error.message, 'error');
-            }
+            } catch (error) { showStatus('Error exporting employees: ' + error.message, 'error'); }
         }
 
         async function exportAllData() {
             try {
                 showStatus('Preparing all data for export...', 'info');
-                
-                const orders = await Backend.getOrdersForBusiness(currentUser.id);
-                const inventory = await Backend.loadInventoryItems();
+                const orders = await Backend.getOrdersForBusiness(businessId);
+                const inventory = await Backend.loadInventoryItems(businessId);
                 const employees = await Backend.getStaffList();
-                
-                // Create separate sheets in one workbook
                 const wb = XLSX.utils.book_new();
-                
                 if (orders.length > 0) {
                     const orderData = orders.map(order => ({
                         'Order ID': order.id,
@@ -3234,7 +3134,6 @@
                     const ws = XLSX.utils.json_to_sheet(orderData);
                     XLSX.utils.book_append_sheet(wb, ws, 'Orders');
                 }
-                
                 if (inventory.length > 0) {
                     const invData = inventory.map(item => ({
                         'Item Name': item.name || '',
@@ -3249,7 +3148,6 @@
                     const ws = XLSX.utils.json_to_sheet(invData);
                     XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
                 }
-                
                 if (employees.length > 0) {
                     const empData = employees.map(emp => ({
                         'Employee ID': emp.id || '',
@@ -3260,12 +3158,7 @@
                     const ws = XLSX.utils.json_to_sheet(empData);
                     XLSX.utils.book_append_sheet(wb, ws, 'Employees');
                 }
-                
-                if (wb.SheetNames.length === 0) {
-                    showStatus('No data to export', 'error');
-                    return;
-                }
-                
+                if (wb.SheetNames.length === 0) { showStatus('No data to export', 'error'); return; }
                 const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
                 const blob = new Blob([wbout], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
@@ -3276,45 +3169,23 @@
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                
                 showStatus('✅ All data exported successfully!', 'success');
-            } catch (error) {
-                showStatus('Error exporting all data: ' + error.message, 'error');
-            }
+            } catch (error) { showStatus('Error exporting all data: ' + error.message, 'error'); }
         }
 
-        // ---- IMPORT FUNCTIONS ----
         async function importInventoryFromExcel() {
             const fileInput = document.getElementById('inventoryImportFile');
             const file = fileInput.files[0];
-            
-            if (!file) {
-                showStatus('Please select an Excel file first', 'error');
-                return;
-            }
-            
-            // Validate file type
-            const validTypes = [
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-                'application/vnd.ms-excel' // .xls
-            ];
+            if (!file) { showStatus('Please select an Excel file first', 'error'); return; }
+            const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
             if (!validTypes.includes(file.type) && !file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
                 showStatus('Please select an Excel file (.xlsx or .xls)', 'error');
                 return;
             }
-            
             showStatus('Reading Excel file...', 'info');
-            
             try {
-                // Step 1: Parse Excel file
                 const excelData = await parseExcelFile(file);
-                
-                if (excelData.length === 0) {
-                    showStatus('No data found in the Excel file', 'error');
-                    return;
-                }
-                
-                // Step 2: Map column names (handle different variations)
+                if (excelData.length === 0) { showStatus('No data found in the Excel file', 'error'); return; }
                 const mappedData = excelData.map(row => {
                     const getValue = (keys) => {
                         for (const key of keys) {
@@ -3324,7 +3195,6 @@
                         }
                         return '';
                     };
-                    
                     return {
                         name: getValue(['Item Name', 'name', 'item name', 'Item', 'product', 'Product']),
                         batchNumber: getValue(['Batch Number', 'batchNumber', 'batch', 'Batch']),
@@ -3337,45 +3207,18 @@
                                 (getValue(['On Sale', 'onSale', 'on sale'])).toString().toLowerCase() === 'true'
                     };
                 });
-                
-                // Step 3: Validate data
-                const validItems = mappedData.filter(item => {
-                    return item.name && item.name.trim() !== '';
-                });
-                
-                if (validItems.length === 0) {
-                    showStatus('No valid items found. "Item Name" is required.', 'error');
-                    return;
-                }
-                
-                if (validItems.length < mappedData.length) {
-                    const skipped = mappedData.length - validItems.length;
-                    if (!confirm(`${validItems.length} valid items found. ${skipped} items skipped (missing name). Import the ${validItems.length} items?`)) {
-                        return;
-                    }
-                } else {
-                    if (!confirm(`Import ${validItems.length} items to inventory?`)) {
-                        return;
-                    }
-                }
-                
+                const validItems = mappedData.filter(item => item.name && item.name.trim() !== '');
+                if (validItems.length === 0) { showStatus('No valid items found. "Item Name" is required.', 'error'); return; }
+                if (!confirm(`Import ${validItems.length} items to inventory?`)) return;
                 showStatus(`Importing ${validItems.length} items...`, 'info');
-                
-                // Step 4: Load existing inventory and merge
-                const existing = await Backend.loadInventoryItems();
-                
-                // Step 5: Add new items (avoid duplicates by checking name + batch)
+                const existing = await Backend.loadInventoryItems(businessId);
                 const merged = [...existing];
-                let addedCount = 0;
-                let duplicateCount = 0;
-                
+                let addedCount = 0, duplicateCount = 0;
                 for (const item of validItems) {
-                    // Check if item already exists (same name and batch)
                     const exists = merged.some(existingItem => 
                         existingItem.name === item.name && 
                         existingItem.batchNumber === item.batchNumber
                     );
-                    
                     if (!exists) {
                         merged.push({
                             name: item.name,
@@ -3385,154 +3228,25 @@
                             originalPrice: item.originalPrice || 0,
                             salePrice: item.salePrice || 0,
                             category: item.category || 'other',
-                            onSale: item.onSale || false
+                            onSale: item.onSale || false,
+                            businessId: businessId
                         });
                         addedCount++;
-                    } else {
-                        duplicateCount++;
-                    }
+                    } else { duplicateCount++; }
                 }
-                
-                if (addedCount === 0) {
-                    showStatus(`All ${duplicateCount} items already exist in inventory. No new items added.`, 'info');
-                    return;
-                }
-                
-                // Step 6: Save merged inventory
+                if (addedCount === 0) { showStatus(`All items already exist in inventory.`, 'info'); return; }
                 const result = await Backend.saveInventoryItems(merged);
                 if (result.success) {
-                    showStatus(`✅ Successfully imported ${addedCount} items to inventory!${duplicateCount > 0 ? ` (${duplicateCount} duplicates skipped)` : ''}`, 'success');
+                    showStatus(`✅ Imported ${addedCount} items to inventory!${duplicateCount > 0 ? ` (${duplicateCount} duplicates skipped)` : ''}`, 'success');
                     fileInput.value = '';
                     await loadInventory();
-                } else {
-                    showStatus('Failed to import inventory items', 'error');
-                }
-            } catch (error) {
-                showStatus('Error importing Excel: ' + error.message, 'error');
-            }
+                } else { showStatus('Failed to import inventory items', 'error'); }
+            } catch (error) { showStatus('Error importing Excel: ' + error.message, 'error'); }
         }
 
-        async function importOrdersFromExcel() {
-            const fileInput = document.getElementById('ordersImportFile');
-            const file = fileInput.files[0];
-            
-            if (!file) {
-                showStatus('Please select an Excel file first', 'error');
-                return;
-            }
-            
-            // Validate file type
-            const validTypes = [
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-                'application/vnd.ms-excel' // .xls
-            ];
-            if (!validTypes.includes(file.type) && !file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
-                showStatus('Please select an Excel file (.xlsx or .xls)', 'error');
-                return;
-            }
-            
-            showStatus('Reading Excel file...', 'info');
-            
-            try {
-                // Step 1: Parse Excel file
-                const excelData = await parseExcelFile(file);
-                
-                if (excelData.length === 0) {
-                    showStatus('No data found in the Excel file', 'error');
-                    return;
-                }
-                
-                // Step 2: Map column names
-                const mappedData = excelData.map(row => {
-                    const getValue = (keys) => {
-                        for (const key of keys) {
-                            if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
-                                return row[key];
-                            }
-                        }
-                        return '';
-                    };
-                    
-                    return {
-                        consumerName: getValue(['Customer', 'consumerName', 'customer name', 'Customer Name']),
-                        foodName: getValue(['Item', 'foodName', 'Food Name', 'food name']),
-                        quantity: parseInt(getValue(['Quantity', 'quantity', 'qty'])) || 1,
-                        totalAmount: parseFloat(getValue(['Total Amount', 'totalAmount', 'Amount', 'amount'])) || 0,
-                        status: getValue(['Status', 'status']),
-                        batchNumber: getValue(['Batch Number', 'batchNumber', 'batch', 'Batch']),
-                        createdAt: getValue(['Created At', 'createdAt', 'date', 'Date'])
-                    };
-                });
-                
-                // Step 3: Validate data
-                const validOrders = mappedData.filter(order => {
-                    return order.consumerName && order.consumerName.trim() !== '' && 
-                           order.foodName && order.foodName.trim() !== '';
-                });
-                
-                if (validOrders.length === 0) {
-                    showStatus('No valid orders found. "Customer" and "Item" are required.', 'error');
-                    return;
-                }
-                
-                if (validOrders.length < mappedData.length) {
-                    const skipped = mappedData.length - validOrders.length;
-                    if (!confirm(`${validOrders.length} valid orders found. ${skipped} orders skipped (missing required fields). Import the ${validOrders.length} orders?`)) {
-                        return;
-                    }
-                } else {
-                    if (!confirm(`Import ${validOrders.length} orders?`)) {
-                        return;
-                    }
-                }
-                
-                showStatus(`Importing ${validOrders.length} orders...`, 'info');
-                
-                let successCount = 0;
-                let errorCount = 0;
-                
-                for (const order of validOrders) {
-                    try {
-                        const Order = Parse.Object.extend("Order");
-                        const newOrder = new Order();
-                        newOrder.set("consumerName", order.consumerName);
-                        newOrder.set("foodName", order.foodName);
-                        newOrder.set("quantity", order.quantity || 1);
-                        newOrder.set("totalAmount", order.totalAmount || 0);
-                        newOrder.set("status", order.status || 'pending');
-                        newOrder.set("batchNumber", order.batchNumber || '');
-                        newOrder.set("businessId", currentUser.id);
-                        newOrder.set("businessName", currentUser.get('businessName'));
-                        newOrder.set("consumerId", 'imported_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6));
-                        
-                        if (order.createdAt) {
-                            const date = new Date(order.createdAt);
-                            if (!isNaN(date.getTime())) {
-                                newOrder.set("createdAt", date);
-                            }
-                        }
-                        
-                        await newOrder.save();
-                        successCount++;
-                    } catch (err) {
-                        errorCount++;
-                    }
-                }
-                
-                showStatus(`✅ Imported ${successCount} orders. ${errorCount} failed.`, 'success');
-                fileInput.value = '';
-                await loadOrders();
-            } catch (error) {
-                showStatus('Error importing Excel: ' + error.message, 'error');
-            }
-        }
-
-        // ---- TEMPLATE DOWNLOAD ----
         function downloadTemplate(type) {
-            let data = [];
-            
             if (type === 'inventory') {
-                data = [{
+                const data = [{
                     'Item Name': 'Sample Item',
                     'Batch Number': 'BATCH-001',
                     'Expiry Date': '2026-12-31',
@@ -3543,22 +3257,11 @@
                     'On Sale': 'Yes'
                 }];
                 downloadExcel(data, 'inventory_template.xlsx', 'Inventory Template');
-            } else if (type === 'orders') {
-                data = [{
-                    'Customer': 'John Doe',
-                    'Item': 'Organic Milk',
-                    'Quantity': '2',
-                    'Total Amount': '10.00',
-                    'Status': 'pending',
-                    'Batch Number': 'BATCH-001',
-                    'Created At': new Date().toISOString()
-                }];
-                downloadExcel(data, 'orders_template.xlsx', 'Orders Template');
-            }
-            showStatus(`✅ Template downloaded!`, 'success');
+                showStatus('✅ Template downloaded!', 'success');
+            } else { showStatus('Unknown template type.', 'error'); }
         }
 
-        // Expose functions globally
+        // ===== EXPOSE GLOBALLY =====
         window.switchTab = switchTab;
         window.saveProfile = saveProfile;
         window.loadOrders = loadOrders;
@@ -3579,16 +3282,14 @@
         window.addInventoryItem = addInventoryItem;
         window.exportToAd = exportToAd;
         window.deleteInventoryItem = deleteInventoryItem;
-        window.importFromAds = importFromAds;
         window.openEditInventory = openEditInventory;
         window.closeEditInventory = closeEditInventory;
         window.saveEditInventory = saveEditInventory;
-        
-        // Employee & Role Exports
         window.loadEmployees = loadEmployees;
         window.loadRoles = loadRoles;
         window.approveEmployee = approveEmployee;
-        window.assignRole = assignRole;
+        window.toggleRoleDropdown = toggleRoleDropdown;
+        window.setEmployeeRoleDirect = setEmployeeRoleDirect;
         window.removeEmployee = removeEmployee;
         window.createRole = createRole;
         window.deleteRole = deleteRole;
@@ -3597,14 +3298,11 @@
         window.submitVerification = submitVerification;
         window.confirmSingleOrder = confirmSingleOrder;
         window.markRead = markRead;
-
-        // Excel Import/Export Exports
         window.exportOrders = exportOrders;
         window.exportInventory = exportInventory;
         window.exportEmployees = exportEmployees;
         window.exportAllData = exportAllData;
         window.importInventoryFromExcel = importInventoryFromExcel;
-        window.importOrdersFromExcel = importOrdersFromExcel;
         window.downloadTemplate = downloadTemplate;
     </script>
 </body>

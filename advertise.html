@@ -786,6 +786,19 @@
             "123456789019": { name: "Frozen Pizza", price: 180, category: "frozen" }
         };
         
+        // ===== PRICE CACHE HELPERS =====
+        function saveAdPrice(adId, price) {
+            const map = JSON.parse(localStorage.getItem('adPriceCache') || '{}');
+            map[adId] = price;
+            localStorage.setItem('adPriceCache', JSON.stringify(map));
+        }
+
+        function getCachedAdPrice(adId) {
+            const map = JSON.parse(localStorage.getItem('adPriceCache') || '{}');
+            return map[adId];
+        }
+        // ================================
+
         // Set default dates
         document.addEventListener('DOMContentLoaded', () => {
             const today = new Date();
@@ -880,14 +893,23 @@
         async function loadAdForEditing(adId) {
             document.getElementById('loadingOverlay').style.display = 'flex';
             try {
-                const shopAds = await Backend.getShopAds();
+                const currentUser = Backend.getCurrentUser();
+                const shopAds = await Backend.getShopAds(currentUser.id);
                 const ad = shopAds.find(a => a.id === adId);
                 if (ad) {
-                    document.getElementById('foodName').value = ad.foodName;
+                    document.getElementById('foodName').value = ad.foodName || '';
                     document.getElementById('description').value = ad.description || '';
-                    document.getElementById('originalPrice').value = ad.originalPrice;
-                    document.getElementById('discount').value = ad.discount;
-                    document.getElementById('quantity').value = ad.quantityLeft;
+                    // Use cached price if backend value is missing or zero
+                    let price = ad.originalPrice != null ? ad.originalPrice : null;
+                    if (price == null || price === 0) {
+                        const cached = getCachedAdPrice(ad.id);
+                        if (cached != null) {
+                            price = cached;
+                        }
+                    }
+                    document.getElementById('originalPrice').value = price != null ? price : '';
+                    document.getElementById('discount').value = ad.discount != null ? ad.discount : '';
+                    document.getElementById('quantity').value = ad.quantityLeft != null ? ad.quantityLeft : 1;
                     document.getElementById('batchNumber').value = ad.batchNumber || '';
                     document.getElementById('category').value = ad.category || 'other';
                     
@@ -905,6 +927,8 @@
                         preview.innerHTML = `<img src="${uploadedImageBase64}" alt="Product preview">`;
                         document.getElementById('removeImageBtn').style.display = 'inline-block';
                     }
+                } else {
+                    showNotification('Ad not found', 'error');
                 }
             } catch (error) {
                 showNotification('Error loading ad for editing', 'error');
@@ -1177,6 +1201,8 @@
                 if (editMode && editAdId) {
                     result = await Backend.updateAd(editAdId, adData);
                     if (result.success) {
+                        // 💾 Cache the price in case backend fails
+                        saveAdPrice(editAdId, originalPrice);
                         showNotification('Ad updated successfully!', 'success');
                         setTimeout(() => {
                             window.location.href = 'advertise.html';
@@ -1187,10 +1213,11 @@
                 } else {
                     result = await Backend.createAd(adData);
                     if (result.success) {
+                        // 💾 Cache the price for the new ad
+                        saveAdPrice(result.adId, originalPrice);
                         showNotification('Ad posted successfully!', 'success');
                         // If this was from inventory, clear the mapping and data
                         if (fromInventory && inventoryData && inventoryData.inventoryId) {
-                            // Map the ad ID to inventory ID for auto-sync
                             const mapStr = localStorage.getItem('inventoryAdMap');
                             let adMap = mapStr ? JSON.parse(mapStr) : {};
                             adMap[result.adId] = inventoryData.inventoryId;
@@ -1200,11 +1227,6 @@
                         loadMyAds();
                         // Clear inventory data
                         localStorage.removeItem('inventoryExportData');
-                        // Remove URL param if needed
-                        if (window.history && window.history.pushState) {
-                            const newUrl = window.location.pathname + (window.location.search ? '?' + new URLSearchParams(window.location.search).toString().replace(/fromInventory=true&?/, '') : '');
-                            window.history.pushState({}, '', newUrl);
-                        }
                     } else {
                         showNotification(result.message || 'Failed to post ad', 'error');
                     }

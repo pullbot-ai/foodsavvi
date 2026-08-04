@@ -1635,7 +1635,8 @@ const Backend = {
             
             const newItems = items.map(item => {
                 const invItem = new Inventory();
-                invItem.set("businessId", currentUser.id);
+                // Use the passed businessId if available, otherwise currentUser.id
+                invItem.set("businessId", item.businessId || currentUser.id);
                 invItem.set("name", item.name);
                 invItem.set("batchNumber", item.batchNumber || "");
                 invItem.set("expiryDate", item.expiryDate ? new Date(item.expiryDate) : null);
@@ -1658,14 +1659,18 @@ const Backend = {
         }
     },
 
-    async loadInventoryItems() {
+    // 🔥 FIXED: Accept optional businessId parameter
+    async loadInventoryItems(businessId) {
         try {
             const currentUser = Parse.User.current();
             if (!currentUser) return [];
             
+            // Use the passed businessId, or fallback to current user's ID (for owners)
+            const id = businessId || currentUser.id;
+            
             const Inventory = Parse.Object.extend("Inventory");
             const query = new Parse.Query(Inventory);
-            query.equalTo("businessId", currentUser.id);
+            query.equalTo("businessId", id);
             query.descending("createdAt");
             const items = await query.find();
             
